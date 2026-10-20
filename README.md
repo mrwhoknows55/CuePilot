@@ -1,6 +1,6 @@
 # CuePilot
 
-A macOS menu bar application managed as a Python 3.15+ uv workspace.
+A macOS menu bar application managed as a Python 3.14 uv workspace.
 
 ```text
 .
@@ -20,16 +20,21 @@ uv run cuepilot
 ```
 
 On macOS, CuePilot appears in the menu bar and starts listening to the default
-microphone. Left or right click it to see the recent input level, pause or resume
-capture, open About, or quit. The terminal logs the input device, sample rate,
-and when audio frames first arrive.
+microphone. Left or right click it to see the recent input level and latest
+transcript, choose English or the Mac's first preferred system language, pause or
+resume capture, open About, or quit. English is selected by default. The terminal
+logs the input device, sample rate, and recognized speech. CuePilot groups speech
+using input level and a short silence gap, then transcribes it locally with MLX
+Whisper. The first launch downloads the `mlx-community/whisper-tiny` model; later
+launches use the local cache. Transcripts are only displayed and logged for now.
+If the model does not support the system language, its menu option is disabled.
 
 macOS may ask for microphone access. If the menu reports **No input signal**,
 check **System Settings → Privacy & Security → Microphone** for the terminal
 running CuePilot, then check the selected device under **Sound → Input**.
-The current version keeps only a live level in memory; it does not save or send
-audio. The capture code emits 20 ms mono PCM chunks for a future VAD or speech
-recognizer.
+CuePilot keeps live audio and transcripts in memory. It does not save recordings
+or send microphone audio to a service. The capture code emits 20 ms mono PCM
+chunks; a dedicated worker groups them before transcription.
 
 You can also start it with `uv run python -m cuepilot`. The app stays open until
 you choose **Quit CuePilot**.
