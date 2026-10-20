@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "CuePilot"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "rumps>=0.4.0 ; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 cuepilot = "cuepilot:main"

@@ -1,13 +1,13 @@
 # CuePilot
 
-A Python 3.15+ application managed as a uv workspace.
+A macOS menu bar application managed as a Python 3.15+ uv workspace.
 
 ```text
 .
 ├── pyproject.toml          # Root application and workspace configuration
 ├── uv.lock                 # Shared dependency lockfile
-├── src/cuepilot/           # Application package
-└── packages/               # Future workspace libraries
+├── src/cuepilot/           # Entry point and platform frontends
+└── packages/               # Shared libraries when needed
 ```
 
 ## Development
@@ -15,11 +15,17 @@ A Python 3.15+ application managed as a uv workspace.
 From the repository root:
 
 ```sh
-uv sync --all-packages
+uv sync --locked --all-packages
 uv run cuepilot
 ```
 
-You can also run the application with `uv run python -m cuepilot`.
+On macOS, CuePilot appears in the menu bar with an About item and a Quit item.
+You can also start it with `uv run python -m cuepilot`. The app stays open until
+you choose **Quit CuePilot**.
+
+The entry point selects a platform frontend. The `rumps` dependency applies only
+on macOS, so future Windows and Linux frontends can use their own UI libraries.
+Shared application behavior can move into `packages/` when it is implemented.
 
 ## Workspace dependencies
 
