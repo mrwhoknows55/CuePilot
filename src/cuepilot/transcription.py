@@ -9,6 +9,8 @@ from threading import Event, Thread
 import numpy as np
 from scipy.signal import resample_poly
 
+from cuepilot.config import WAKE_WORD
+
 logger = logging.getLogger(__name__)
 
 MODEL = "mlx-community/whisper-tiny"
@@ -208,6 +210,8 @@ class SpeechTranscriber:
                     path_or_hf_repo=MODEL,
                     verbose=None,
                     condition_on_previous_text=False,
+                    # Each segment is decoded independently; repeat the name hint.
+                    initial_prompt=WAKE_WORD,
                     language=self.language,
                 )
                 transcript = result["text"].strip()

@@ -21,6 +21,8 @@ from AppKit import (
 )
 from Foundation import NSLocale
 
+from cuepilot.commands import CommandProcessor
+from cuepilot.config import WAKE_WORD
 from cuepilot.microphone import Microphone
 from cuepilot.transcription import SpeechTranscriber
 
@@ -32,6 +34,7 @@ class CuePilotMenuBar(rumps.App):
         super().__init__("CuePilot", quit_button="Quit CuePilot")
         self._about_window = None
         self.transcriber = SpeechTranscriber()
+        self.commands = CommandProcessor()
         self.microphone = Microphone(on_chunk=self.transcriber.feed)
         preferred = NSLocale.preferredLanguages()
         self.system_language = (
@@ -49,6 +52,8 @@ class CuePilotMenuBar(rumps.App):
         self.mic_status.set_callback(None)
         self.last_transcript = rumps.MenuItem("No transcript yet")
         self.last_transcript.set_callback(None)
+        self.command_status = rumps.MenuItem(f"Say “{WAKE_WORD}” followed by a command")
+        self.command_status.set_callback(None)
         self.english_language = rumps.MenuItem("English")
         self.english_language.state = True
         self.system_language_name = str(
@@ -64,6 +69,7 @@ class CuePilotMenuBar(rumps.App):
         self.menu = [
             self.mic_status,
             self.last_transcript,
+            self.command_status,
             None,
             self.mic_toggle,
             self.language_menu,
@@ -94,14 +100,19 @@ class CuePilotMenuBar(rumps.App):
             self._paused = True
             self.microphone.stop()
             self.transcriber.reset()
+            self.commands.reset()
+            self.command_status.title = "Commands paused"
             self._refresh_status()
             logger.info("Microphone paused")
         else:
+            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
             self.start_microphone()
 
     def use_english(self, _: rumps.MenuItem) -> None:
         if self.transcriber.language != "en":
             self.transcriber.set_language("en")
+            self.commands.reset()
+            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
         self.english_language.state = True
         self.system_language_item.state = False
         self.language_menu.title = "Language: English"
@@ -110,6 +121,8 @@ class CuePilotMenuBar(rumps.App):
     def use_system_language(self, _: rumps.MenuItem) -> None:
         if self.transcriber.language != self.system_language:
             self.transcriber.set_language(self.system_language)
+            self.commands.reset()
+            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
         self.english_language.state = False
         self.system_language_item.state = True
         self.language_menu.title = f"Language: {self.system_language_name} (System)"
@@ -159,9 +172,14 @@ class CuePilotMenuBar(rumps.App):
                 self.last_transcript.title = f"“{preview}”"
                 self._model_error = False
                 logger.info("Transcript: %s", value)
+                if not self._paused and self.microphone.active:
+                    if self.commands.submit(value):
+                        self.command_status.title = "Working…"
             elif kind == "error":
                 self._model_error = True
                 logger.error("%s", value)
+        for message in self.commands.poll():
+            self.command_status.title = message
         if self.transcriber.dropped_audio:
             logger.warning("Audio chunks dropped while transcription was busy")
             self.transcriber.dropped_audio = False
@@ -265,6 +283,7 @@ def run() -> None:
         if shutdown_complete:
             return
         shutdown_complete = True
+        app.commands.close()
         try:
             app.microphone.stop()
         except Exception as exc:
@@ -288,6 +307,7 @@ def run() -> None:
         app._nsapp.nsstatusitem.button().setMenu_(app.menu._menu)
         logger.info("Menu bar ready; left or right click CuePilot to open its menu")
         app.transcriber.start()
+        app.commands.start()
         app.start_microphone()
 
     @rumps.timer(1)
