@@ -19,7 +19,8 @@ uv sync --locked --all-packages
 uv run cuepilot
 ```
 
-On macOS, CuePilot appears in the menu bar with an About item and a Quit item.
+On macOS, CuePilot appears in the menu bar. Left or right click it for the About
+window and Quit item. The terminal shows startup, About, and Quit logs.
 You can also start it with `uv run python -m cuepilot`. The app stays open until
 you choose **Quit CuePilot**.
 
