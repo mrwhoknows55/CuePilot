@@ -19,8 +19,18 @@ uv sync --locked --all-packages
 uv run cuepilot
 ```
 
-On macOS, CuePilot appears in the menu bar. Left or right click it for the About
-window and Quit item. The terminal shows startup, About, and Quit logs.
+On macOS, CuePilot appears in the menu bar and starts listening to the default
+microphone. Left or right click it to see the recent input level, pause or resume
+capture, open About, or quit. The terminal logs the input device, sample rate,
+and when audio frames first arrive.
+
+macOS may ask for microphone access. If the menu reports **No input signal**,
+check **System Settings → Privacy & Security → Microphone** for the terminal
+running CuePilot, then check the selected device under **Sound → Input**.
+The current version keeps only a live level in memory; it does not save or send
+audio. The capture code emits 20 ms mono PCM chunks for a future VAD or speech
+recognizer.
+
 You can also start it with `uv run python -m cuepilot`. The app stays open until
 you choose **Quit CuePilot**.
 
