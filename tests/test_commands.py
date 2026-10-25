@@ -13,7 +13,6 @@ from cuepilot.commands import (
     prepare,
     website_url,
 )
-from cuepilot.config import WAKE_WORD, WAKE_WORD_ALIASES
 
 
 class DecisionTests(unittest.TestCase):
@@ -205,39 +204,25 @@ class PreparationTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    def test_configured_wake_word(self):
-        for name in (WAKE_WORD, *WAKE_WORD_ALIASES):
-            with self.subTest(name=name):
-                commands = CommandProcessor()
-                self.assertTrue(commands.submit(f"{name} open chrome"))
-                self.assertEqual(commands._pending.get_nowait(), (0, "open chrome"))
-
-    def test_requires_address_and_nonempty_command(self):
-        commands = CommandProcessor()
-        for text in [
-            "open Safari",
-            "I mentioned CuePilot",
-            "CuePilot",
-            "CuePilotage mute",
-            "Cue",
-            "Queueball open Chrome",
-            "Cueball open Chrome",
-        ]:
-            self.assertFalse(commands.submit(text))
-        self.assertTrue(commands.submit("Cue Pilot, open Safari"))
-        self.assertEqual(commands._pending.get_nowait(), (0, "open Safari"))
-
-    def test_short_wake_name(self):
-        for text in ["Cue open chrome", "Cue, open chrome", "cue: open chrome", "CuePilot open chrome", "Cue Pilot open chrome"]:
+    def test_accepts_commands_directly(self):
+        for text in ["open Safari", "mute", "please volume up"]:
             with self.subTest(text=text):
                 commands = CommandProcessor()
-                self.assertTrue(commands.submit(text))
-                self.assertEqual(commands._pending.get_nowait(), (0, "open chrome"))
+                self.assertTrue(commands.submit(f"  {text}  "))
+                self.assertEqual(commands._pending.get_nowait(), (0, text))
+
+    def test_empty_or_stopped_commands_are_not_queued(self):
+        commands = CommandProcessor()
+        for text in ["", "  ", "\n"]:
+            self.assertFalse(commands.submit(text))
+        commands.close()
+        self.assertFalse(commands.submit("open Safari"))
+        self.assertTrue(commands._pending.empty())
 
     def test_queue_is_bounded_and_reset_discards_old_results(self):
         commands = CommandProcessor()
         for _ in range(3):
-            commands.submit("CuePilot mute")
+            commands.submit("mute")
         self.assertEqual(commands._pending.qsize(), 2)
         self.assertEqual(commands.poll(), ["Busy — please try again"])
         commands._messages.put((0, "old result"))
@@ -253,7 +238,7 @@ class CommandTests(unittest.TestCase):
         ):
             commands.start()
             try:
-                commands.submit("CuePilot mute")
+                commands.submit("mute")
                 self.assertEqual(commands._messages.get(timeout=2), (0, "Sound muted"))
                 self.assertEqual(
                     run.call_args.args[0],
@@ -278,7 +263,7 @@ class CommandTests(unittest.TestCase):
         ):
             commands.start()
             try:
-                commands.submit("CuePilot mute")
+                commands.submit("mute")
                 self.assertTrue(entered.wait(timeout=2))
                 commands.reset()
                 release.set()
@@ -300,11 +285,11 @@ class CommandTests(unittest.TestCase):
             commands.start()
             try:
                 with self.assertLogs("cuepilot.commands", level="ERROR"):
-                    commands.submit("CuePilot mute")
+                    commands.submit("mute")
                     self.assertIn(
                         "check local Laya server", commands._messages.get(timeout=2)[1]
                     )
-                commands.submit("CuePilot mute")
+                commands.submit("mute")
                 self.assertEqual(commands._messages.get(timeout=2), (0, "Sound muted"))
                 run.assert_called_once()
             finally:

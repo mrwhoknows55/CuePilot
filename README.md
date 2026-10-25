@@ -24,7 +24,7 @@ microphone. Left or right click it to see the current status and latest
 transcript, choose English or the Mac's first preferred system language, pause or
 resume capture, open About, or quit. English is selected by default. The terminal
 logs the input device, sample rate, and recognized speech. CuePilot groups speech
-using input level and a short silence gap, then transcribes it locally with MLX
+using Silero VAD and a short silence gap, then transcribes it locally with MLX
 Whisper. The first launch downloads the `mlx-community/whisper-tiny` model; later
 launches use the local cache.
 If the model does not support the system language, its menu option is disabled.
@@ -34,7 +34,7 @@ check **System Settings → Privacy & Security → Microphone** for the terminal
 running CuePilot, then check the selected device under **Sound → Input**.
 CuePilot keeps live audio and transcripts in memory. It does not save recordings
 or send microphone audio to a service. The capture code emits 20 ms mono PCM
-chunks; a dedicated worker groups them before transcription. Addressed commands
+chunks; a dedicated worker groups them before transcription. Supported requests
 send transcript text to your local Laya server as described below.
 
 ## Local voice commands
@@ -44,44 +44,42 @@ Laya model enabled. Keyless localhost access works by default. If your server
 requires authentication, set `CUEPILOT_LAYA_API_KEY` before running CuePilot.
 No additional Python dependencies or local model downloads are needed for Laya.
 
-Say one command at a time, starting with “Cue”. “CuePilot” and “Cue Pilot”
-remain accepted for compatibility. For example, “Cue, open Chrome.”
-Whisper uses “Cue” as a spelling hint. Other supported examples:
+Say one command at a time, such as “open Chrome.” No wake word is required.
+Silero VAD detects speech locally in 32 ms windows; after about half a second of
+silence, Whisper transcribes the segment and CuePilot checks it for a supported
+command. The Silero model is bundled with the installed package. Examples:
 
-Change `WAKE_WORD` in `src/cuepilot/config.py` to customize the spoken name.
-The Whisper hint, command matcher, and menu hints share this setting. Restart
-CuePilot after changing it. Previous names are listed in `WAKE_WORD_ALIASES`.
-
-- “CuePilot, open Safari.”
-- “CuePilot, open Notes.”
-- “CuePilot, open Finder.”
-- “CuePilot, open Chrome.”
-- “CuePilot, open Chrome and then github.com.”
-- “CuePilot, open youtube.com in Chrome.”
-- “CuePilot, open Spotify.”
-- “CuePilot, next song.”
-- “CuePilot, pause music.”
-- “CuePilot, resume Spotify.”
-- “CuePilot, previous song.”
-- “CuePilot, increase brightness.”
-- “CuePilot, decrease brightness.”
-- “CuePilot, mute.”
-- “CuePilot, unmute.”
-- “Cue, volume up.”
-- “Cue, volume down.”
-- “Cue, set volume to 40 percent.”
+- “open Safari.”
+- “open Notes.”
+- “open Finder.”
+- “open Chrome.”
+- “open Chrome and then github.com.”
+- “open youtube.com in Chrome.”
+- “open Spotify.”
+- “next song.”
+- “pause music.”
+- “resume Spotify.”
+- “previous song.”
+- “increase brightness.”
+- “decrease brightness.”
+- “mute.”
+- “unmute.”
+- “volume up.”
+- “volume down.”
+- “set volume to 40 percent.”
 
 Volume up/down adjusts system output by 10 percentage points, clamped to 0–100.
 Exact volume accepts an integer percentage in that range. Positive changes
 unmute output; zero mutes it. This controls system volume, not Spotify's separate
 volume slider. Some digital/external output devices do not support system volume.
 
-CuePilot sends the text after the prefix to Laya using `model: "laya"` and a
-resolved capability and its parameters plus an `ignore` choice. It executes a predefined
+CuePilot checks each transcript and sends supported requests to Laya using
+`model: "laya"` and a resolved capability and its parameters plus an `ignore`
+choice. It executes a predefined
 AppleScript only when the chosen action's probability is at least 0.85. This
 initial threshold is a heuristic, not a guarantee of correct classification.
-Other speech is still transcribed but does not trigger commands. The menu shows
-command results; the terminal logs detailed errors. macOS may ask for Automation
+Speech that does not match a supported request does not trigger commands. The
+menu shows command results; the terminal logs detailed errors. macOS may ask for Automation
 permission to control an app.
 
 App opening is generic: CuePilot discovers application bundles in `/Applications`,
@@ -112,15 +110,15 @@ work with external monitors; the menu reports the request, not a measured change
 ### Manual checks
 
 1. Leave the local Laya server running and start `uv run cuepilot` in a terminal.
-2. Wait for **Listening** in the menu. Speak a complete command above without
-   pausing between “CuePilot” and the command, then wait for its result.
+2. Wait for **Listening** in the menu. Speak a complete command above, then wait
+   for its result.
 3. Verify Chrome/Spotify opens, a website opens in a Chrome tab, Spotify's track
    or playback state changes, or brightness changes by one step. Check the menu's
    transcript preview if nothing happens; terminal logs contain detailed errors.
 4. Allow any macOS microphone, Automation, or Accessibility prompts for the
    terminal/host running the app. Relaunch CuePilot after changing permissions.
 5. Pause from the menu and speak a command: nothing should execute. Resume and
-   repeat. Say “CuePilot, do not open Chrome” to verify it is ignored.
+   repeat. Say “do not open Chrome” to verify it is ignored.
 
 Automated checks (no apps, playback, or display settings are changed):
 

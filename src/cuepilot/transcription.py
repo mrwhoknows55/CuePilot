@@ -9,13 +9,12 @@ from threading import Event, Thread
 import numpy as np
 from scipy.signal import resample_poly
 
-from cuepilot.config import WAKE_WORD
-
 logger = logging.getLogger(__name__)
 
 MODEL = "mlx-community/whisper-tiny"
 TARGET_RATE = 16_000
-SPEECH_LEVEL = 0.01
+VAD_WINDOW = 512  # Silero expects 32 ms windows at 16 kHz.
+SPEECH_THRESHOLD = 0.5
 END_SILENCE_SECONDS = 0.5
 MIN_SPEECH_SECONDS = 0.2
 MAX_SEGMENT_SECONDS = 10
@@ -56,7 +55,7 @@ class SpeechTranscriber:
 
     def __init__(self) -> None:
         self._chunks: Queue[tuple[bytes, int, int]] = Queue(maxsize=500)
-        self._segments: Queue[tuple[bytes, int, int]] = Queue(maxsize=2)
+        self._segments: Queue[tuple[np.ndarray, int]] = Queue(maxsize=2)
         self._messages: Queue[tuple[int | None, str, str]] = Queue()
         self._stop = Event()
         self._generation = 0
@@ -117,10 +116,24 @@ class SpeechTranscriber:
             logger.warning("Transcription worker did not stop before shutdown")
 
     def _group_speech(self) -> None:
-        preroll: deque[bytes] = deque(maxlen=15)
-        segment: list[bytes] = []
+        try:
+            import torch
+            from silero_vad import load_silero_vad
+
+            torch.set_num_threads(1)
+            model = load_silero_vad()
+        except Exception as exc:
+            logger.exception("Could not load Silero VAD")
+            self._messages.put((None, "vad_error", f"Silero VAD unavailable: {exc}"))
+            return
+        self._messages.put((None, "vad_ready", "Silero VAD"))
+
+        preroll: deque[np.ndarray] = deque(maxlen=10)
+        segment: list[np.ndarray] = []
+        pending = np.empty(0, dtype=np.float32)
         segment_frames = voiced_frames = silent_frames = 0
         current_generation = self._generation
+        current_rate = None
 
         while not self._stop.is_set():
             try:
@@ -129,46 +142,63 @@ class SpeechTranscriber:
                 continue
             if generation != self._generation:
                 continue
-            if generation != current_generation:
+            if generation != current_generation or rate != current_rate:
+                model.reset_states()
                 preroll.clear()
                 segment = []
+                pending = np.empty(0, dtype=np.float32)
                 segment_frames = voiced_frames = silent_frames = 0
                 current_generation = generation
+                current_rate = rate
 
             samples = np.frombuffer(chunk, dtype="<i2")
             if samples.size == 0:
                 continue
             waveform = samples.astype(np.float32) / 32768
-            level = float(np.sqrt(np.mean(waveform * waveform)))
-            speaking = level >= SPEECH_LEVEL
+            if rate != TARGET_RATE:
+                factor = gcd(rate, TARGET_RATE)
+                waveform = resample_poly(waveform, TARGET_RATE // factor, rate // factor)
+            pending = np.concatenate((pending, waveform))
 
-            if not segment:
-                if not speaking:
-                    preroll.append(chunk)
-                    continue
-                segment = list(preroll)
-                segment_frames = sum(len(part) // 2 for part in segment)
-                preroll.clear()
+            while pending.size >= VAD_WINDOW:
+                window = pending[:VAD_WINDOW].copy()
+                pending = pending[VAD_WINDOW:]
+                try:
+                    with torch.inference_mode():
+                        probability = model(torch.from_numpy(window), TARGET_RATE).item()
+                    speaking = probability >= SPEECH_THRESHOLD
+                except Exception as exc:
+                    logger.exception("Silero VAD inference failed")
+                    self._messages.put((None, "vad_error", f"Silero VAD failed: {exc}"))
+                    return
 
-            segment.append(chunk)
-            segment_frames += samples.size
-            if speaking:
-                voiced_frames += samples.size
-                silent_frames = 0
-            else:
-                silent_frames += samples.size
+                if not segment:
+                    if not speaking:
+                        preroll.append(window)
+                        continue
+                    segment = list(preroll)
+                    segment_frames = len(segment) * VAD_WINDOW
+                    preroll.clear()
 
-            if (
-                silent_frames >= END_SILENCE_SECONDS * rate
-                or segment_frames >= MAX_SEGMENT_SECONDS * rate
-            ):
-                if voiced_frames >= MIN_SPEECH_SECONDS * rate:
-                    try:
-                        self._segments.put_nowait((b"".join(segment), rate, generation))
-                    except Full:
-                        self._messages.put((generation, "error", "Transcription is falling behind"))
-                segment = []
-                segment_frames = voiced_frames = silent_frames = 0
+                segment.append(window)
+                segment_frames += VAD_WINDOW
+                if speaking:
+                    voiced_frames += VAD_WINDOW
+                    silent_frames = 0
+                else:
+                    silent_frames += VAD_WINDOW
+
+                if (
+                    silent_frames >= END_SILENCE_SECONDS * TARGET_RATE
+                    or segment_frames >= MAX_SEGMENT_SECONDS * TARGET_RATE
+                ):
+                    if voiced_frames >= MIN_SPEECH_SECONDS * TARGET_RATE:
+                        try:
+                            self._segments.put_nowait((np.concatenate(segment), generation))
+                        except Full:
+                            self._messages.put((generation, "error", "Transcription is falling behind"))
+                    segment = []
+                    segment_frames = voiced_frames = silent_frames = 0
 
     def _transcribe(self) -> None:
         try:
@@ -195,23 +225,17 @@ class SpeechTranscriber:
 
         while not self._stop.is_set():
             try:
-                pcm, rate, generation = self._segments.get(timeout=0.1)
+                audio, generation = self._segments.get(timeout=0.1)
             except Empty:
                 continue
             if generation != self._generation:
                 continue
             try:
-                audio = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-                if rate != TARGET_RATE:
-                    factor = gcd(rate, TARGET_RATE)
-                    audio = resample_poly(audio, TARGET_RATE // factor, rate // factor)
                 result = mlx_whisper.transcribe(
                     audio,
                     path_or_hf_repo=MODEL,
                     verbose=None,
                     condition_on_previous_text=False,
-                    # Each segment is decoded independently; repeat the name hint.
-                    initial_prompt=WAKE_WORD,
                     language=self.language,
                 )
                 transcript = result["text"].strip()

@@ -1,4 +1,4 @@
-"""Route addressed speech through local Laya to parameterized Mac actions."""
+"""Route speech through local Laya to parameterized Mac actions."""
 
 import json
 import logging
@@ -13,7 +13,6 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from cuepilot.applications import resolve_application
-from cuepilot.config import WAKE_WORD, WAKE_WORD_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +100,6 @@ end run""",
         "Requested brightness decrease",
     ),
 }
-_wake_names = "|".join(
-    r"\s+".join(re.escape(part) for part in name.split())
-    for name in sorted((WAKE_WORD, *WAKE_WORD_ALIASES), key=len, reverse=True)
-)
-ADDRESS = re.compile(rf"^\s*(?:{_wake_names})\b[\s,.:!—-]*", re.IGNORECASE)
 COMMAND_PATTERNS = {
     "mute": r"mute(?: (?:the )?(?:sound|audio|volume))?",
     "unmute": r"unmute(?: (?:the )?(?:sound|audio|volume))?",
@@ -267,10 +261,9 @@ class CommandProcessor:
         self._thread.start()
 
     def submit(self, transcript: str) -> bool:
-        match = ADDRESS.match(transcript)
-        if not match or self._stop.is_set():
+        if self._stop.is_set():
             return False
-        text = transcript[match.end() :].strip()
+        text = transcript.strip()
         if not text:
             return False
         try:

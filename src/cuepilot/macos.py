@@ -22,7 +22,6 @@ from AppKit import (
 from Foundation import NSLocale
 
 from cuepilot.commands import CommandProcessor
-from cuepilot.config import WAKE_WORD
 from cuepilot.microphone import Microphone
 from cuepilot.transcription import SpeechTranscriber
 
@@ -43,6 +42,7 @@ class CuePilotMenuBar(rumps.App):
             else "en"
         )
         self._model_ready = False
+        self._vad_ready = False
         self._model_error = False
         self._paused = False
         self._reported_audio = False
@@ -52,7 +52,7 @@ class CuePilotMenuBar(rumps.App):
         self.mic_status.set_callback(None)
         self.last_transcript = rumps.MenuItem("No transcript yet")
         self.last_transcript.set_callback(None)
-        self.command_status = rumps.MenuItem(f"Say “{WAKE_WORD}” followed by a command")
+        self.command_status = rumps.MenuItem("Say a command, such as “open Chrome”")
         self.command_status.set_callback(None)
         self.english_language = rumps.MenuItem("English")
         self.english_language.state = True
@@ -105,14 +105,14 @@ class CuePilotMenuBar(rumps.App):
             self._refresh_status()
             logger.info("Microphone paused")
         else:
-            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
+            self.command_status.title = "Say a command, such as “open Chrome”"
             self.start_microphone()
 
     def use_english(self, _: rumps.MenuItem) -> None:
         if self.transcriber.language != "en":
             self.transcriber.set_language("en")
             self.commands.reset()
-            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
+            self.command_status.title = "Say a command, such as “open Chrome”"
         self.english_language.state = True
         self.system_language_item.state = False
         self.language_menu.title = "Language: English"
@@ -122,7 +122,7 @@ class CuePilotMenuBar(rumps.App):
         if self.transcriber.language != self.system_language:
             self.transcriber.set_language(self.system_language)
             self.commands.reset()
-            self.command_status.title = f"Say “{WAKE_WORD}” followed by a command"
+            self.command_status.title = "Say a command, such as “open Chrome”"
         self.english_language.state = False
         self.system_language_item.state = True
         self.language_menu.title = f"Language: {self.system_language_name} (System)"
@@ -139,7 +139,7 @@ class CuePilotMenuBar(rumps.App):
             action = "Pause Microphone"
             if self._model_error:
                 status = "Transcription unavailable"
-            elif not self._model_ready:
+            elif not self._model_ready or not self._vad_ready:
                 status = "Getting ready…"
             elif self._reported_silence:
                 status = "No microphone input"
@@ -152,7 +152,8 @@ class CuePilotMenuBar(rumps.App):
         for kind, value in self.transcriber.poll():
             if kind == "ready":
                 self._model_ready = True
-                self._model_error = False
+                if self._vad_ready:
+                    self._model_error = False
                 self.english_language.set_callback(self.use_english)
                 if self.system_language in self.transcriber.supported_languages:
                     self.system_language_item.set_callback(self.use_system_language)
@@ -165,17 +166,23 @@ class CuePilotMenuBar(rumps.App):
                         self.system_language,
                     )
                 logger.info("Whisper model ready: %s", value)
+            elif kind == "vad_ready":
+                self._vad_ready = True
+                logger.info("Silero VAD ready")
             elif kind == "transcript":
                 preview = " ".join(value.split())
                 if len(preview) > 60:
                     preview = preview[:59].rstrip() + "…"
                 self.last_transcript.title = f"“{preview}”"
-                self._model_error = False
+                if self._vad_ready:
+                    self._model_error = False
                 logger.info("Transcript: %s", value)
                 if not self._paused and self.microphone.active:
                     if self.commands.submit(value):
                         self.command_status.title = "Working…"
-            elif kind == "error":
+            elif kind in {"error", "vad_error"}:
+                if kind == "vad_error":
+                    self._vad_ready = False
                 self._model_error = True
                 logger.error("%s", value)
         for message in self.commands.poll():
