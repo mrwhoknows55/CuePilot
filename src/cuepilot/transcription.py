@@ -9,9 +9,11 @@ from threading import Event, Thread
 import numpy as np
 from scipy.signal import resample_poly
 
+from cuepilot.timing import log_latency
+
 logger = logging.getLogger(__name__)
 
-MODEL = "mlx-community/whisper-tiny"
+MODEL = "mlx-community/whisper-medium"
 TARGET_RATE = 16_000
 VAD_WINDOW = 512  # Silero expects 32 ms windows at 16 kHz.
 SPEECH_THRESHOLD = 0.5
@@ -117,11 +119,12 @@ class SpeechTranscriber:
 
     def _group_speech(self) -> None:
         try:
-            import torch
-            from silero_vad import load_silero_vad
+            with log_latency(logger, "silero_vad_load"):
+                import torch
+                from silero_vad import load_silero_vad
 
-            torch.set_num_threads(1)
-            model = load_silero_vad()
+                torch.set_num_threads(1)
+                model = load_silero_vad()
         except Exception as exc:
             logger.exception("Could not load Silero VAD")
             self._messages.put((None, "vad_error", f"Silero VAD unavailable: {exc}"))
@@ -156,16 +159,18 @@ class SpeechTranscriber:
                 continue
             waveform = samples.astype(np.float32) / 32768
             if rate != TARGET_RATE:
-                factor = gcd(rate, TARGET_RATE)
-                waveform = resample_poly(waveform, TARGET_RATE // factor, rate // factor)
+                with log_latency(logger, "audio_resample", level=logging.DEBUG):
+                    factor = gcd(rate, TARGET_RATE)
+                    waveform = resample_poly(waveform, TARGET_RATE // factor, rate // factor)
             pending = np.concatenate((pending, waveform))
 
             while pending.size >= VAD_WINDOW:
                 window = pending[:VAD_WINDOW].copy()
                 pending = pending[VAD_WINDOW:]
                 try:
-                    with torch.inference_mode():
-                        probability = model(torch.from_numpy(window), TARGET_RATE).item()
+                    with log_latency(logger, "silero_vad_inference", level=logging.DEBUG):
+                        with torch.inference_mode():
+                            probability = model(torch.from_numpy(window), TARGET_RATE).item()
                     speaking = probability >= SPEECH_THRESHOLD
                 except Exception as exc:
                     logger.exception("Silero VAD inference failed")
@@ -202,20 +207,21 @@ class SpeechTranscriber:
 
     def _transcribe(self) -> None:
         try:
-            # mlx_whisper drives tqdm, which otherwise creates a multiprocessing
-            # RLock and leaves a named semaphore behind at shutdown.
-            _disable_tqdm_multiprocessing_lock()
-            import mlx_whisper
-            from mlx_whisper.tokenizer import LANGUAGES
+            with log_latency(logger, "whisper_load_and_warmup"):
+                # mlx_whisper drives tqdm, which otherwise creates a multiprocessing
+                # RLock and leaves a named semaphore behind at shutdown.
+                _disable_tqdm_multiprocessing_lock()
+                import mlx_whisper
+                from mlx_whisper.tokenizer import LANGUAGES
 
-            # This loads (and on first use downloads) the model before the first command.
-            mlx_whisper.transcribe(
-                np.zeros(TARGET_RATE, dtype=np.float32),
-                path_or_hf_repo=MODEL,
-                verbose=None,
-                language="en",
-            )
-            self.supported_languages = frozenset(LANGUAGES)
+                # This loads (and on first use downloads) the model before the first command.
+                mlx_whisper.transcribe(
+                    np.zeros(TARGET_RATE, dtype=np.float32),
+                    path_or_hf_repo=MODEL,
+                    verbose=None,
+                    language="en",
+                )
+                self.supported_languages = frozenset(LANGUAGES)
         except Exception as exc:
             logger.exception("Could not load Whisper model")
             self._messages.put((None, "error", f"Model unavailable: {exc}"))
@@ -231,14 +237,15 @@ class SpeechTranscriber:
             if generation != self._generation:
                 continue
             try:
-                result = mlx_whisper.transcribe(
-                    audio,
-                    path_or_hf_repo=MODEL,
-                    verbose=None,
-                    condition_on_previous_text=False,
-                    language=self.language,
-                )
-                transcript = result["text"].strip()
+                with log_latency(logger, "whisper_transcription"):
+                    result = mlx_whisper.transcribe(
+                        audio,
+                        path_or_hf_repo=MODEL,
+                        verbose=None,
+                        condition_on_previous_text=False,
+                        language=self.language,
+                    )
+                    transcript = result["text"].strip()
             except Exception as exc:
                 logger.exception("Whisper transcription failed")
                 self._messages.put((generation, "error", f"Transcription failed: {exc}"))

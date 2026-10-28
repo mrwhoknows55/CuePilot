@@ -47,8 +47,11 @@ class DecisionTests(unittest.TestCase):
         with (
             patch("cuepilot.commands.urlopen", return_value=self.response()) as send,
             patch.dict("os.environ", {"CUEPILOT_LAYA_API_KEY": ""}),
+            self.assertLogs("cuepilot.commands", level="INFO") as logs,
         ):
             self.assertEqual(decide("mute"), Command("mute"))
+        self.assertTrue(any("operation=command_prepare" in line for line in logs.output))
+        self.assertTrue(any("operation=laya_decision" in line and "status=ok" in line for line in logs.output))
         request = send.call_args.args[0]
         self.assertEqual(request.full_url, "http://localhost:8888/v1/systemone")
         self.assertIsNone(request.get_header("Authorization"))
@@ -105,9 +108,11 @@ class DecisionTests(unittest.TestCase):
                 "cuepilot.commands.urlopen",
                 side_effect=HTTPError("http://localhost:8888", 401, "Unauthorized", {}, None),
             ),
+            self.assertLogs("cuepilot.commands", level="INFO") as logs,
             self.assertRaisesRegex(ValueError, "HTTP 401.*API key"),
         ):
             decide("mute")
+        self.assertTrue(any("operation=laya_decision" in line and "status=error" in line for line in logs.output))
 
     def test_connection_refused_blocks_execution_and_worker_recovers(self):
         endpoint = "http://127.0.0.1:9000/v1/systemone"

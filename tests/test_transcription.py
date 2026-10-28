@@ -108,5 +108,42 @@ class SpeechGroupingTests(unittest.TestCase):
         self.assertEqual(transcriber.poll(), [('vad_error', 'Silero VAD unavailable: bad model')])
 
 
+class TranscriptionLatencyTests(unittest.TestCase):
+    def test_whisper_timings_preserve_results_and_errors(self):
+        for fails in (False, True):
+            with self.subTest(fails=fails):
+                transcriber = SpeechTranscriber()
+                transcriber._segments.put((np.zeros(TARGET_RATE, dtype=np.float32), 0))
+
+                def transcribe(audio, **kwargs):
+                    if 'condition_on_previous_text' not in kwargs:
+                        return {'text': ''}  # Model warmup.
+                    transcriber._stop.set()
+                    if fails:
+                        raise RuntimeError('inference failed')
+                    return {'text': ' mute '}
+
+                with (
+                    patch.dict('sys.modules', {
+                        'mlx_whisper': SimpleNamespace(transcribe=transcribe),
+                        'mlx_whisper.tokenizer': SimpleNamespace(LANGUAGES={'en': 'English'}),
+                    }),
+                    patch('cuepilot.transcription._disable_tqdm_multiprocessing_lock'),
+                    self.assertLogs('cuepilot.transcription', level='INFO') as logs,
+                ):
+                    transcriber._transcribe()
+                self.assertTrue(any(
+                    'operation=whisper_load_and_warmup' in line and 'status=ok' in line
+                    for line in logs.output
+                ))
+                status = 'error' if fails else 'ok'
+                self.assertTrue(any(
+                    'operation=whisper_transcription' in line and f'status={status}' in line
+                    for line in logs.output
+                ))
+                expected = ('error', 'Transcription failed: inference failed') if fails else ('transcript', 'mute')
+                self.assertIn(expected, transcriber.poll())
+
+
 if __name__ == '__main__':
     unittest.main()

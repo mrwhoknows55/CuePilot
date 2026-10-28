@@ -9,12 +9,12 @@ import subprocess
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
-from time import perf_counter
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from cuepilot.applications import resolve_application
+from cuepilot.timing import log_latency
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,8 @@ def prepare(text: str) -> Command | None:
 def decide(text: str) -> Command | None:
     """Return a supported action only when Laya is sufficiently certain."""
     # Laya can confidently misroute negations, unsupported apps, and conversation.
-    command = prepare(text)
+    with log_latency(logger, "command_prepare"):
+        command = prepare(text)
     if command is None:
         return None
     # Supply the resolved capability, not every installed app or unrelated action.
@@ -232,8 +233,9 @@ def decide(text: str) -> Command | None:
     endpoint = os.environ.get("CUEPILOT_LAYA_ENDPOINT", ENDPOINT)
     request = Request(endpoint, data=json.dumps(payload).encode(), headers=headers)
     try:
-        with urlopen(request, timeout=30) as response:
-            answer = json.load(response)["answers"]["action"]
+        with log_latency(logger, "laya_decision"):
+            with urlopen(request, timeout=30) as response:
+                answer = json.load(response)["answers"]["action"]
     except HTTPError as exc:
         raise ValueError(
             f"Laya returned HTTP {exc.code} — check Decision API settings and API key"
@@ -334,17 +336,16 @@ class CommandProcessor:
                     "Executing command: action=%s arguments=%s",
                     command.action, command.arguments,
                 )
-                started = perf_counter()
-                subprocess.run(
-                    ["/usr/bin/osascript", "-e", script, *command.arguments],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
+                with log_latency(logger, f"applescript:{command.action}"):
+                    subprocess.run(
+                        ["/usr/bin/osascript", "-e", script, *command.arguments],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                 logger.info(
-                    "Command completed: action=%s duration=%.2fs",
-                    command.action, perf_counter() - started,
+                    "Command completed: action=%s", command.action,
                 )
             except ConnectionError as exc:
                 logger.warning("%s", exc)

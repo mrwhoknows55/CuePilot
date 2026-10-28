@@ -27,6 +27,11 @@ logs the input device, sample rate, and recognized speech. CuePilot groups speec
 using Silero VAD and a short silence gap, then transcribes it locally with MLX
 Whisper. The first launch downloads the `mlx-community/whisper-tiny` model; later
 launches use the local cache.
+The terminal also logs operation latency in milliseconds for model loading,
+Whisper transcription, command preparation, Laya requests, and AppleScript
+execution, including failed operations. Per-window Silero VAD inference and audio
+resampling timings are logged at DEBUG level. Timings measure each operation's
+processing time; they exclude queue waits and the silence gap used to group speech.
 If the model does not support the system language, its menu option is disabled.
 
 macOS may ask for microphone access. If the menu reports **No microphone input**,
