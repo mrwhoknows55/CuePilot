@@ -9,6 +9,7 @@ import subprocess
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -227,9 +228,20 @@ def decide(text: str) -> Command | None:
     headers = {"Content-Type": "application/json"}
     if key := os.environ.get("CUEPILOT_LAYA_API_KEY"):
         headers["Authorization"] = f"Bearer {key}"
-    request = Request(ENDPOINT, data=json.dumps(payload).encode(), headers=headers)
-    with urlopen(request, timeout=30) as response:
-        answer = json.load(response)["answers"]["action"]
+    endpoint = os.environ.get("CUEPILOT_LAYA_ENDPOINT", ENDPOINT)
+    request = Request(endpoint, data=json.dumps(payload).encode(), headers=headers)
+    try:
+        with urlopen(request, timeout=30) as response:
+            answer = json.load(response)["answers"]["action"]
+    except HTTPError as exc:
+        raise ValueError(
+            f"Laya returned HTTP {exc.code} — check Decision API settings and API key"
+        ) from exc
+    except URLError as exc:
+        raise ConnectionError(
+            f"Cannot reach Laya at {endpoint} — start Unsloth Studio "
+            "and enable the Decision API"
+        ) from exc
     choice = answer["choice"]
     probability = answer["probabilities"][choice]
     if (
@@ -325,14 +337,24 @@ class CommandProcessor:
                     timeout=10,
                 )
                 logger.info("Command completed: %s", command.action)
+            except ConnectionError as exc:
+                logger.warning("%s", exc)
+                message = str(exc)
             except ValueError as exc:
                 logger.warning("Command rejected: %s", exc)
                 message = str(exc)
             except subprocess.CalledProcessError as exc:
-                logger.warning("AppleScript failed: %s", exc.stderr.strip())
+                detail = (exc.stderr or "").strip()
+                logger.warning("AppleScript failed: %s", detail)
                 message = (
                     "Couldn’t run command — check Automation/Accessibility permissions"
                 )
+                if "not allowed to send keystrokes" in detail:
+                    message = (
+                        "Allow your terminal/host in System Settings → Privacy & "
+                        "Security → Accessibility, then restart CuePilot"
+                    )
+                    logger.warning("%s", message)
             except subprocess.TimeoutExpired:
                 logger.warning("AppleScript command timed out")
                 message = "Command timed out"

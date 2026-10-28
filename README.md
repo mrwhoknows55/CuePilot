@@ -39,8 +39,22 @@ send transcript text to your local Laya server as described below.
 
 ## Local voice commands
 
-Start Unsloth's Decision API at `http://localhost:8888/v1/systemone` with the
-Laya model enabled. Keyless localhost access works by default. If your server
+Start Unsloth Studio in a separate terminal and keep it running:
+
+```sh
+unsloth studio -H 127.0.0.1 -p 8888
+```
+
+Open `http://localhost:8888` and enable the Decision API in **Settings → API**
+with the Laya model enabled. See the [Unsloth Decision API setup](https://unsloth.ai/docs/basics/train-your-own-decision-model-with-unsloth).
+CuePilot connects to `http://localhost:8888/v1/systemone` by default. If the
+server uses a different address or port, set `CUEPILOT_LAYA_ENDPOINT` to its full
+Decision API URL before starting CuePilot. A connection-refused message means
+the server is not listening at that address; commands will not execute until
+it is available. CuePilot reports the connection problem and accepts subsequent
+commands once the server is running.
+
+Keyless localhost access works by default. If your server
 requires authentication, set `CUEPILOT_LAYA_API_KEY` before running CuePilot.
 No additional Python dependencies or local model downloads are needed for Laya.
 
@@ -106,6 +120,14 @@ Allow Accessibility permission for the host running CuePilot if prompted, as
 well as Automation permission. These are relative adjustments, not exact
 percentages. Their effect depends on the keyboard/display setup and may not
 work with external monitors; the menu reports the request, not a measured change.
+
+If the log says `osascript is not allowed to send keystrokes. (1002)`, open
+**System Settings → Privacy & Security → Accessibility** and enable the app
+that launched CuePilot (for example, Terminal, iTerm, or your editor when using
+its integrated terminal). Add it with **+** if missing. Quit and reopen that
+host, then run `uv run cuepilot` again. Under **Privacy & Security → Automation**,
+also allow the host to control **System Events** if requested. Recognition and
+command routing have already succeeded when this keystroke error appears.
 
 ### Manual checks
 

@@ -1,8 +1,10 @@
 import io
 import json
+import subprocess
 import unittest
 from threading import Event
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from cuepilot.applications import Application
 from cuepilot.commands import (
@@ -87,6 +89,55 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(
             send.call_args.args[0].get_header("Authorization"), "Bearer test-key"
         )
+
+    def test_configured_endpoint(self):
+        endpoint = "http://127.0.0.1:9000/v1/systemone"
+        with (
+            patch.dict("os.environ", {"CUEPILOT_LAYA_ENDPOINT": endpoint}),
+            patch("cuepilot.commands.urlopen", return_value=self.response()) as send,
+        ):
+            self.assertEqual(decide("mute"), Command("mute"))
+        self.assertEqual(send.call_args.args[0].full_url, endpoint)
+
+    def test_http_failure_reports_decision_api_settings(self):
+        with (
+            patch(
+                "cuepilot.commands.urlopen",
+                side_effect=HTTPError("http://localhost:8888", 401, "Unauthorized", {}, None),
+            ),
+            self.assertRaisesRegex(ValueError, "HTTP 401.*API key"),
+        ):
+            decide("mute")
+
+    def test_connection_refused_blocks_execution_and_worker_recovers(self):
+        endpoint = "http://127.0.0.1:9000/v1/systemone"
+        commands = CommandProcessor()
+        with (
+            patch.dict("os.environ", {"CUEPILOT_LAYA_ENDPOINT": endpoint}),
+            patch(
+                "cuepilot.commands.urlopen",
+                side_effect=[
+                    URLError(ConnectionRefusedError(61, "Connection refused")),
+                    self.response(),
+                ],
+            ),
+            patch("cuepilot.commands.subprocess.run") as run,
+        ):
+            commands.start()
+            try:
+                with self.assertLogs("cuepilot.commands", level="WARNING") as logs:
+                    commands.submit("Can you open Chrome?")
+                    generation, message = commands._messages.get(timeout=2)
+                self.assertEqual(generation, 0)
+                self.assertIn(endpoint, message)
+                self.assertIn("start Unsloth Studio", message)
+                self.assertTrue(all(record.exc_info is None for record in logs.records))
+                run.assert_not_called()
+                commands.submit("mute")
+                self.assertEqual(commands._messages.get(timeout=2), (0, "Sound muted"))
+                run.assert_called_once()
+            finally:
+                commands.close()
 
     def test_unsupported_and_negated_commands_do_not_reach_model(self):
         with patch("cuepilot.commands.urlopen") as send:
@@ -243,6 +294,34 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual(
                     run.call_args.args[0],
                     ["/usr/bin/osascript", "-e", ACTIONS["mute"][1]],
+                )
+            finally:
+                commands.close()
+
+    def test_keystroke_denial_explains_recovery_and_keeps_worker_alive(self):
+        commands = CommandProcessor()
+        failure = subprocess.CalledProcessError(
+            1,
+            ["/usr/bin/osascript"],
+            stderr="System Events got an error: osascript is not allowed to send keystrokes. (1002)",
+        )
+        with (
+            patch("cuepilot.commands.decide", return_value=Command("brightness_down")),
+            patch("cuepilot.commands.subprocess.run", side_effect=[failure, None]),
+        ):
+            commands.start()
+            try:
+                with self.assertLogs("cuepilot.commands", level="WARNING") as logs:
+                    commands.submit("decrease brightness")
+                    message = commands._messages.get(timeout=2)[1]
+                self.assertIn("System Settings", message)
+                self.assertIn("Accessibility", message)
+                self.assertIn("terminal/host", message)
+                self.assertIn(message, " ".join(logs.output))
+                commands.submit("decrease brightness")
+                self.assertEqual(
+                    commands._messages.get(timeout=2),
+                    (0, "Requested brightness decrease"),
                 )
             finally:
                 commands.close()
