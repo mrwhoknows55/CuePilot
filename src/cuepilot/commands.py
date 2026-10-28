@@ -9,6 +9,7 @@ import subprocess
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import Event, Thread
+from time import perf_counter
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -329,6 +330,11 @@ class CommandProcessor:
                     continue
                 _, script, message = ACTIONS[command.action]
                 message = command.message or message
+                logger.info(
+                    "Executing command: action=%s arguments=%s",
+                    command.action, command.arguments,
+                )
+                started = perf_counter()
                 subprocess.run(
                     ["/usr/bin/osascript", "-e", script, *command.arguments],
                     check=True,
@@ -336,7 +342,10 @@ class CommandProcessor:
                     text=True,
                     timeout=10,
                 )
-                logger.info("Command completed: %s", command.action)
+                logger.info(
+                    "Command completed: action=%s duration=%.2fs",
+                    command.action, perf_counter() - started,
+                )
             except ConnectionError as exc:
                 logger.warning("%s", exc)
                 message = str(exc)
